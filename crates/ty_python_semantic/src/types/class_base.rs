@@ -48,9 +48,7 @@ impl<'db> ClassBase<'db> {
             ClassBase::Class(class) => class.name(db),
             ClassBase::Dynamic(DynamicType::Any) => "Any",
             ClassBase::Dynamic(DynamicType::Unknown) => "Unknown",
-            ClassBase::Dynamic(
-                DynamicType::Todo(_) | DynamicType::TodoTypeAlias | DynamicType::TodoUnpack,
-            ) => "@Todo",
+            ClassBase::Dynamic(DynamicType::Todo(_) | DynamicType::TodoUnpack) => "@Todo",
             ClassBase::Dynamic(DynamicType::Divergent(_)) => "Divergent",
             ClassBase::Protocol => "Protocol",
             ClassBase::Generic => "Generic",
