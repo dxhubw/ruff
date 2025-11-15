@@ -142,7 +142,7 @@ jobs:
           name: ruff
           path: target/debug
 
-      - uses: dawidd6/action-download-artifact@v2
+      - uses: dawidd6/action-download-artifact@v11
         name: Download base results
         with:
           name: ruff
