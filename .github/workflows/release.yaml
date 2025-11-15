@@ -401,7 +401,7 @@ jobs:
       # For pypi trusted publishing
       id-token: write
     steps:
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@v6
         with:
           name: wheels
           path: wheels
@@ -411,7 +411,7 @@ jobs:
           skip-existing: true
           packages-dir: wheels
           verbose: true
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@v6
         with:
           name: binaries
           path: binaries

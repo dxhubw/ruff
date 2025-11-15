@@ -135,7 +135,7 @@ jobs:
         with:
           python-version: "3.11"
 
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@v6
         name: Download Ruff binary
         id: ruff-target
         with:
