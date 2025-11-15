@@ -4369,11 +4369,6 @@ impl<'db> Type<'db> {
                 Type::KnownBoundMethod(KnownBoundMethodType::StrStartswith(literal)),
             )
             .into(),
-            Type::NominalInstance(instance)
-                if instance.has_known_class(db, KnownClass::Path) && name == "open" =>
-            {
-                Place::bound(Type::KnownBoundMethod(KnownBoundMethodType::PathOpen)).into()
-            }
 
             Type::ClassLiteral(class)
                 if name == "range" && class.is_known(db, KnownClass::ConstraintSet) =>
@@ -6791,7 +6786,15 @@ impl<'db> Type<'db> {
 
                     Ok(typing_self(db, scope_id, typevar_binding_context, class).unwrap_or(*self))
                 }
-                SpecialFormType::TypeAlias => Ok(Type::Dynamic(DynamicType::TodoTypeAlias)),
+                // We ensure that `typing.TypeAlias` used in the expected position (annotating an
+                // annotated assignment statement) doesn't reach here. Using it in any other type
+                // expression is an error.
+                SpecialFormType::TypeAlias => Err(InvalidTypeExpressionError {
+                    invalid_expressions: smallvec::smallvec_inline![
+                        InvalidTypeExpression::TypeAlias
+                    ],
+                    fallback_type: Type::unknown(),
+                }),
                 SpecialFormType::TypedDict => Err(InvalidTypeExpressionError {
                     invalid_expressions: smallvec::smallvec_inline![
                         InvalidTypeExpression::TypedDict
@@ -7269,7 +7272,6 @@ impl<'db> Type<'db> {
             | Type::WrapperDescriptor(_)
             | Type::KnownBoundMethod(
                 KnownBoundMethodType::StrStartswith(_)
-                | KnownBoundMethodType::PathOpen
                 | KnownBoundMethodType::ConstraintSetRange
                 | KnownBoundMethodType::ConstraintSetAlways
                 | KnownBoundMethodType::ConstraintSetNever
@@ -7429,7 +7431,6 @@ impl<'db> Type<'db> {
             | Type::WrapperDescriptor(_)
             | Type::KnownBoundMethod(
                 KnownBoundMethodType::StrStartswith(_)
-                | KnownBoundMethodType::PathOpen
                 | KnownBoundMethodType::ConstraintSetRange
                 | KnownBoundMethodType::ConstraintSetAlways
                 | KnownBoundMethodType::ConstraintSetNever
@@ -8216,9 +8217,6 @@ pub enum DynamicType<'db> {
     ///
     /// This variant should be created with the `todo_type!` macro.
     Todo(TodoType),
-    /// A special Todo-variant for type aliases declared using `typing.TypeAlias`.
-    /// A temporary variant to detect and special-case the handling of these aliases in autocomplete suggestions.
-    TodoTypeAlias,
     /// A special Todo-variant for `Unpack[Ts]`, so that we can treat it specially in `Generic[Unpack[Ts]]`
     TodoUnpack,
     /// A type that is determined to be divergent during type inference for a recursive function.
@@ -8246,13 +8244,6 @@ impl std::fmt::Display for DynamicType<'_> {
             DynamicType::TodoUnpack => {
                 if cfg!(debug_assertions) {
                     f.write_str("@Todo(typing.Unpack)")
-                } else {
-                    f.write_str("@Todo")
-                }
-            }
-            DynamicType::TodoTypeAlias => {
-                if cfg!(debug_assertions) {
-                    f.write_str("@Todo(Support for `typing.TypeAlias`)")
                 } else {
                     f.write_str("@Todo")
                 }
@@ -8415,6 +8406,9 @@ enum InvalidTypeExpression<'db> {
     ConstraintSet,
     /// Same for `typing.TypedDict`
     TypedDict,
+    /// Same for `typing.TypeAlias`, anywhere except for as the sole annotation on an annotated
+    /// assignment
+    TypeAlias,
     /// Type qualifiers are always invalid in *type expressions*,
     /// but these ones are okay with 0 arguments in *annotation expressions*
     TypeQualifier(SpecialFormType),
@@ -8469,6 +8463,11 @@ impl<'db> InvalidTypeExpression<'db> {
                         f.write_str(
                             "The special form `typing.TypedDict` is not allowed in type expressions. \
                             Did you mean to use a concrete TypedDict or `collections.abc.Mapping[str, object]` instead?")
+                    }
+                    InvalidTypeExpression::TypeAlias => {
+                        f.write_str(
+                            "`typing.TypeAlias` is only allowed as the sole annotation on an annotated assignment",
+                        )
                     }
                     InvalidTypeExpression::TypeQualifier(qualifier) => write!(
                         f,
@@ -10910,8 +10909,6 @@ pub enum KnownBoundMethodType<'db> {
     /// this allows us to understand statically known branches for common tests such as
     /// `if sys.platform.startswith("freebsd")`.
     StrStartswith(StringLiteralType<'db>),
-    /// Method wrapper for `Path.open`,
-    PathOpen,
 
     // ConstraintSet methods
     ConstraintSetRange,
@@ -10943,8 +10940,7 @@ pub(super) fn walk_method_wrapper_type<'db, V: visitor::TypeVisitor<'db> + ?Size
         KnownBoundMethodType::StrStartswith(string_literal) => {
             visitor.visit_type(db, Type::StringLiteral(string_literal));
         }
-        KnownBoundMethodType::PathOpen
-        | KnownBoundMethodType::ConstraintSetRange
+        KnownBoundMethodType::ConstraintSetRange
         | KnownBoundMethodType::ConstraintSetAlways
         | KnownBoundMethodType::ConstraintSetNever
         | KnownBoundMethodType::ConstraintSetImpliesSubtypeOf(_)
@@ -11001,8 +10997,7 @@ impl<'db> KnownBoundMethodType<'db> {
                 ConstraintSet::from(self == other)
             }
 
-            (KnownBoundMethodType::PathOpen, KnownBoundMethodType::PathOpen)
-            | (
+            (
                 KnownBoundMethodType::ConstraintSetRange,
                 KnownBoundMethodType::ConstraintSetRange,
             )
@@ -11033,7 +11028,6 @@ impl<'db> KnownBoundMethodType<'db> {
                 | KnownBoundMethodType::PropertyDunderGet(_)
                 | KnownBoundMethodType::PropertyDunderSet(_)
                 | KnownBoundMethodType::StrStartswith(_)
-                | KnownBoundMethodType::PathOpen
                 | KnownBoundMethodType::ConstraintSetRange
                 | KnownBoundMethodType::ConstraintSetAlways
                 | KnownBoundMethodType::ConstraintSetNever
@@ -11045,7 +11039,6 @@ impl<'db> KnownBoundMethodType<'db> {
                 | KnownBoundMethodType::PropertyDunderGet(_)
                 | KnownBoundMethodType::PropertyDunderSet(_)
                 | KnownBoundMethodType::StrStartswith(_)
-                | KnownBoundMethodType::PathOpen
                 | KnownBoundMethodType::ConstraintSetRange
                 | KnownBoundMethodType::ConstraintSetAlways
                 | KnownBoundMethodType::ConstraintSetNever
@@ -11087,8 +11080,7 @@ impl<'db> KnownBoundMethodType<'db> {
                 ConstraintSet::from(self == other)
             }
 
-            (KnownBoundMethodType::PathOpen, KnownBoundMethodType::PathOpen)
-            | (
+            (
                 KnownBoundMethodType::ConstraintSetRange,
                 KnownBoundMethodType::ConstraintSetRange,
             )
@@ -11122,7 +11114,6 @@ impl<'db> KnownBoundMethodType<'db> {
                 | KnownBoundMethodType::PropertyDunderGet(_)
                 | KnownBoundMethodType::PropertyDunderSet(_)
                 | KnownBoundMethodType::StrStartswith(_)
-                | KnownBoundMethodType::PathOpen
                 | KnownBoundMethodType::ConstraintSetRange
                 | KnownBoundMethodType::ConstraintSetAlways
                 | KnownBoundMethodType::ConstraintSetNever
@@ -11134,7 +11125,6 @@ impl<'db> KnownBoundMethodType<'db> {
                 | KnownBoundMethodType::PropertyDunderGet(_)
                 | KnownBoundMethodType::PropertyDunderSet(_)
                 | KnownBoundMethodType::StrStartswith(_)
-                | KnownBoundMethodType::PathOpen
                 | KnownBoundMethodType::ConstraintSetRange
                 | KnownBoundMethodType::ConstraintSetAlways
                 | KnownBoundMethodType::ConstraintSetNever
@@ -11160,7 +11150,6 @@ impl<'db> KnownBoundMethodType<'db> {
                 KnownBoundMethodType::PropertyDunderSet(property.normalized_impl(db, visitor))
             }
             KnownBoundMethodType::StrStartswith(_)
-            | KnownBoundMethodType::PathOpen
             | KnownBoundMethodType::ConstraintSetRange
             | KnownBoundMethodType::ConstraintSetAlways
             | KnownBoundMethodType::ConstraintSetNever
@@ -11178,7 +11167,6 @@ impl<'db> KnownBoundMethodType<'db> {
             | KnownBoundMethodType::PropertyDunderGet(_)
             | KnownBoundMethodType::PropertyDunderSet(_) => KnownClass::MethodWrapperType,
             KnownBoundMethodType::StrStartswith(_) => KnownClass::BuiltinFunctionType,
-            KnownBoundMethodType::PathOpen => KnownClass::MethodType,
             KnownBoundMethodType::ConstraintSetRange
             | KnownBoundMethodType::ConstraintSetAlways
             | KnownBoundMethodType::ConstraintSetNever
@@ -11282,9 +11270,6 @@ impl<'db> KnownBoundMethodType<'db> {
                     ]),
                     Some(KnownClass::Bool.to_instance(db)),
                 )))
-            }
-            KnownBoundMethodType::PathOpen => {
-                Either::Right(std::iter::once(Signature::todo("`Path.open` return type")))
             }
 
             KnownBoundMethodType::ConstraintSetRange => {
